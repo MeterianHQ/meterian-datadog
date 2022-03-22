@@ -146,6 +146,10 @@ def _get_account_uuid(args):
     }
     
     response = requests.get(where, headers=headers, timeout=10)
+    if response.status_code != 200:
+        print ("Unable to collect account information:", response)
+        sys.exit(-1)
+    
     value = json.loads(response.text)
     account_uuid = value['uuid']
 

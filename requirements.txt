@@ -1,0 +1,4 @@
+http.client
+requests
+datadog
+datadog-api-client
