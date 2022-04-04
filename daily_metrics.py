@@ -155,11 +155,12 @@ def _get_account_uuid(args):
 
     print("Account:", value['name'])
     print("Email:", value['email'])
-
+    print();
+    
     return account_uuid
 
 
-def collect_projects():
+def collect_projects_data():
 
     account_uuid = _get_account_uuid(args)
     
@@ -178,16 +179,17 @@ def collect_projects():
         branches = []
         for b in p['branches']:
             if b in args.branches:
+                logging.debug("Selected branch %s of project %s", p['name'], b)
                 branches.append(b)
-                break
-
 
         if len(branches) > 0:            
             logging.debug("Selected %s project", p['name'])
             p['branches'] = branches
             projects.append(p)
-        
-    print("Projects:", str(len(projects)), "out of", str(len(all_projects)))
+        else:
+            logging.debug("Project %s not selected - no matching branches", p['name'])
+            
+    print("Collected", str(len(projects)), "projects out of", str(len(all_projects)))
     return projects
 
 
@@ -314,7 +316,10 @@ if __name__ == '__main__':
     initialize()
 
     print('Collecting information from Meterian...')
-    projects = collect_projects()
+    projects = collect_projects_data()
 
-    print('\nUploading project statistics to DataDog...')
-    send_statistics(projects)
+    if len(projects) > 0:
+        print('\nUploading project statistics to DataDog...')
+        send_statistics(projects)
+    else:
+        print('No projects were selected!')
