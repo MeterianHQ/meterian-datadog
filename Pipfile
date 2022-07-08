@@ -9,6 +9,7 @@ verify_ssl = true
 requests = "*"
 datadog = "*"
 datadog-api-client = "*"
+python-dotenv = "*"
 
 [requires]
 python_version = "3"
