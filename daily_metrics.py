@@ -100,8 +100,18 @@ def _parseArgs():
         metavar='PROJECTS',
         default=os.getenv('PROJECTS', None),
         help=(
-            'Allows you to specify a comma separated list of projecs to be taken in account'
+            'Allows you to specify a comma separated list of projects to be taken in account'
             'You can use the standard environment variable PROJECTS instead'
+        )
+    )
+
+    parser.add_argument(
+        '--tags',
+        metavar='TAGS',
+        default=os.getenv('TAGS', None),
+        help=(
+            'Allows you to specify a comma separated list of tags to be taken in account'
+            'You can use the standard environment variable TAGS instead'
         )
     )
 
@@ -118,12 +128,19 @@ def _parseArgs():
     args = parser.parse_args()
 
     args.meterian_env = os.getenv('METERIAN_ENV', 'www')
-    args.branches =  [x.strip() for x in args.branches.split(',')]
-    if args.projects:
-        args.projects =  [x.strip() for x in args.projects.split(',')]
+
+    args.tags     = _split_by_comma(args.tags)
+    args.branches = _split_by_comma(args.branches)
+    args.projects = _split_by_comma(args.projects)
+
 
     return args
 
+def _split_by_comma(text):
+    if text:
+        return [x.strip() for x in text.split(',')]
+    else:
+        return None
 
 def _initLogging(args):
     levels = {
@@ -160,7 +177,7 @@ def _get_account_uuid(args):
 
     response = requests.get(where, headers=headers, timeout=10)
     if response.status_code != 200:
-        print ("Unable to collect account information:", response)
+        print ("Unable to collect account information at ", where, "\n", response)
         sys.exit(-1)
 
     value = json.loads(response.text)
@@ -194,12 +211,25 @@ def collect_projects_data():
             if not project_name in args.projects:
                 logging.debug("Project %s not selected - name not matching", project_name)
                 continue
-        
-        branches = []
-        for b in p['branches']:
-            if b in args.branches:
-                logging.debug("Selected branch %s of project %s", project_name, b)
-                branches.append(b)
+
+        if args.tags:
+            accepted = False
+            for t in p['tags']:
+                if t in args.tags:
+                    accepted = True
+
+            if not accepted:
+                logging.debug("Project %s not selected - tags %s not matching", project_name, str(p['tags']))
+                continue
+
+        if args.branches:
+            branches = []
+            for b in p['branches']:
+                if b in args.branches:
+                    logging.debug("Selected branch %s of project %s", project_name, b)
+                    branches.append(b)
+        else:
+            branches = p['branches']
 
         if len(branches) > 0:
             logging.debug("Selected %s project", p['name'])
@@ -334,7 +364,7 @@ if __name__ == '__main__':
     logging.info('Initializing DD apis...')
     initialize()
 
-    print('Collecting information from Meterian...')
+    print('Collecting information from Meterian... (%s)' % args.meterian_env)
     projects = collect_projects_data()
 
     if len(projects) > 0:
