@@ -53,7 +53,7 @@ def _parseArgs():
             'You can create your token with a bootstrap+ plan at https://meterian.com/account/#tokens'
         )
     )
-    
+
     val = os.getenv('DATADOG_API_KEY', None)
     parser.add_argument(
         '--dd-apikey',
@@ -64,7 +64,7 @@ def _parseArgs():
             'You should use the standard environment variable DATADOG_API_KEY instead'
         )
     )
-    
+
     parser.add_argument(
         '--dd-appkey',
         metavar='KEY',
@@ -74,7 +74,7 @@ def _parseArgs():
             'You should use the standard environment variable DATADOG_APP_KEY instead'
         )
     )
-    
+
     parser.add_argument(
         '--dd-host',
         metavar='HOST',
@@ -96,6 +96,16 @@ def _parseArgs():
     )
 
     parser.add_argument(
+        '--projects',
+        metavar='PROJECTS',
+        default=os.getenv('PROJECTS', None),
+        help=(
+            'Allows you to specify a comma separated list of projecs to be taken in account'
+            'You can use the standard environment variable PROJECTS instead'
+        )
+    )
+
+    parser.add_argument(
         '-l',
         '--log',
         default='warning',
@@ -104,11 +114,14 @@ def _parseArgs():
     )
 
     parser.add_argument('--recompute', action='store_true')
-    
+
     args = parser.parse_args()
 
     args.meterian_env = os.getenv('METERIAN_ENV', 'www')
     args.branches =  [x.strip() for x in args.branches.split(',')]
+    if args.projects:
+        args.projects =  [x.strip() for x in args.projects.split(',')]
+
     return args
 
 
@@ -141,78 +154,84 @@ def _get_account_uuid(args):
 
     where = "https://" + args.meterian_env + ".meterian.com/api/v1/accounts/me"
     headers = {
-        'content-type':'application/json', 
+        'content-type':'application/json',
         'Authorization':'token ' + args.meterian_token
     }
-    
+
     response = requests.get(where, headers=headers, timeout=10)
     if response.status_code != 200:
         print ("Unable to collect account information:", response)
         sys.exit(-1)
-    
+
     value = json.loads(response.text)
     account_uuid = value['uuid']
 
     print("Account:", value['name'])
     print("Email:", value['email'])
     print();
-    
+
     return account_uuid
 
 
 def collect_projects_data():
 
     account_uuid = _get_account_uuid(args)
-    
-    logging.debug("Loading projects information...")    
+
+    logging.debug("Loading projects information...")
     where = "https://"+args.meterian_env+".meterian.com/api/v1/accounts/"+account_uuid+"/projects"
     headers={
         'content-type':'application/json',
         'Authorization':'token '+args.meterian_token
     }
-    
+
     response = requests.get(where, headers=headers, timeout=10)
     all_projects = json.loads(response.text)
-    
+
     projects = []
     for p in all_projects:
+        project_name = p['name']
+        if args.projects:
+            if not project_name in args.projects:
+                logging.debug("Project %s not selected - name not matching", project_name)
+                continue
+        
         branches = []
         for b in p['branches']:
             if b in args.branches:
-                logging.debug("Selected branch %s of project %s", p['name'], b)
+                logging.debug("Selected branch %s of project %s", project_name, b)
                 branches.append(b)
 
-        if len(branches) > 0:            
+        if len(branches) > 0:
             logging.debug("Selected %s project", p['name'])
             p['branches'] = branches
             projects.append(p)
         else:
-            logging.debug("Project %s not selected - no matching branches", p['name'])
-            
+            logging.debug("Project %s not selected - no matching branches", project_name)
+
     print("Collected", str(len(projects)), "projects out of", str(len(all_projects)))
     return projects
 
 
 def _load_or_recompute_project_report(name, uuid, branch):
-    
+
     headers={
         'content-type':'application/json',
         'Authorization':'token '+args.meterian_token
     }
 
     if args.recompute:
-        print("Recomputing project", name, "branch", branch)    
+        print("Recomputing project", name, "branch", branch)
         where = "https://"+args.meterian_env+".meterian.com/api/v1/reports/"+uuid+"/full?branch="+branch
         response = requests.post(where, headers=headers, timeout=180)
     else:
-        logging.debug("Loading report for project %s, branch %s", uuid, branch)    
+        logging.debug("Loading report for project %s, branch %s", uuid, branch)
         where = "https://"+args.meterian_env+".meterian.com/api/v1/reports/"+uuid+"/json?branch="+branch
         response = requests.get(where, headers=headers, timeout=10)
-        
+
     report = json.loads(response.text)
     logging.debug("Report for project %s, branch %s: %s", uuid, branch, json.dumps(report))
     return report
-    
+
 
 def _send_score_to_dd(name, branch, stype, project_report):
     if stype in project_report:
@@ -221,9 +240,9 @@ def _send_score_to_dd(name, branch, stype, project_report):
             score = report['score']
             metric_name = args.prefix + '.projects.scores.' + stype
             logging.debug("- updating metric %s for project %s/%s", metric_name, name, branch)
-            api.Metric.send(metric=metric_name, 
-                points=[(int(time.time()), score)], 
-                tags=['project:' + name, 'branch:' + branch], 
+            api.Metric.send(metric=metric_name,
+                points=[(int(time.time()), score)],
+                tags=['project:' + name, 'branch:' + branch],
                 type='gauge')
 
 
@@ -233,7 +252,7 @@ def _send_vulns_to_dd(name, branch, project_report):
     high_count = 0
     med_count  = 0
     low_count  = 0
-    
+
     if 'security' in project_report:
         security_report = project_report['security']
         for assessment in security_report['assessments']:
@@ -251,26 +270,26 @@ def _send_vulns_to_dd(name, branch, project_report):
                             med_count+=1
                         elif severity == 'LOW':
                             low_count+=1
-                                
+
     when = int(time.time())
     metric_name = args.prefix + '.projects.vulns'
     logging.debug("- updating metric %s for project %s/%s - C/H/M/L: %d/%d/%d/%d (%d exclusions)", metric_name, name, branch, crit_count, high_count, med_count, low_count, excl_count)
 
-    api.Metric.send(metric=metric_name, 
-        points=[(when, crit_count)], 
-        tags=['project:' + name, 'branch:' + branch, 'severity:CRITICAL'], 
+    api.Metric.send(metric=metric_name,
+        points=[(when, crit_count)],
+        tags=['project:' + name, 'branch:' + branch, 'severity:CRITICAL'],
         type='gauge')
-    api.Metric.send(metric=metric_name, 
-        points=[(when, high_count)], 
-        tags=['project:' + name, 'branch:' + branch, 'severity:HIGH'], 
+    api.Metric.send(metric=metric_name,
+        points=[(when, high_count)],
+        tags=['project:' + name, 'branch:' + branch, 'severity:HIGH'],
         type='gauge')
-    api.Metric.send(metric=metric_name, 
-        points=[(when, med_count)], 
-        tags=['project:' + name, 'branch:' + branch, 'severity:MEDIUM'], 
+    api.Metric.send(metric=metric_name,
+        points=[(when, med_count)],
+        tags=['project:' + name, 'branch:' + branch, 'severity:MEDIUM'],
         type='gauge')
-    api.Metric.send(metric=metric_name, 
-        points=[(when, low_count)], 
-        tags=['project:' + name, 'branch:' + branch, 'severity:LOW'], 
+    api.Metric.send(metric=metric_name,
+        points=[(when, low_count)],
+        tags=['project:' + name, 'branch:' + branch, 'severity:LOW'],
         type='gauge')
 
 
@@ -279,7 +298,7 @@ def send_statistics(projects):
         name = p['name']
         for branch in p['branches']:
             project_report = _load_or_recompute_project_report(name, p['uuid'], branch)
-            
+
             print("Uploading data for project", p['name'], "branch", branch)
             _send_score_to_dd(name, branch, 'security',  project_report)
             _send_score_to_dd(name, branch, 'stability', project_report)
@@ -293,7 +312,7 @@ def recompute_projects(projects):
         for branch in p['branches']:
             print("Uploading data for project", p['name'], "branch", branch)
             project_report = _load_or_recompute_project_report(p['uuid'], branch)
-            
+
             _send_score_to_dd(name, branch, 'security',  project_report)
             _send_score_to_dd(name, branch, 'stability', project_report)
             _send_score_to_dd(name, branch, 'licensing', project_report)
