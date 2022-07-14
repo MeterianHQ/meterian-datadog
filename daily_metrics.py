@@ -11,7 +11,7 @@ import time
 
 from datadog import initialize, api
 from dotenv import load_dotenv
-
+from datetime import datetime, timezone, timedelta
 
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
@@ -323,6 +323,89 @@ def _send_vulns_to_dd(name, branch, project_report):
         type='gauge')
 
 
+def _get_history(project_uuid,branch):
+    where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/history"
+    headers = {
+        'content-type': 'application/json',
+        'Authorization': 'token ' + args.meterian_token
+    }
+    params = {
+        'project': project_uuid,
+        'branch': branch
+    }
+    response = requests.get(where, params=params, headers=headers, timeout=10)
+    print(response.text)
+    res = json.loads(response.text)
+    return res
+
+
+def _find_age(project_uuid,branch):
+    res = _get_history(project_uuid,branch)
+    pid_and_time = []
+    pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
+    pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
+    print(pid_and_time)
+
+    prev_timestamp_map = {}
+    vuln_age_tally_map = {}
+
+    for (pid,p_time) in pid_and_time:
+        where = "https://"+args.meterian_env+".meterian.com/api/v1/reports/"+project_uuid+"/full/"+pid
+        params = {'branch': branch}
+        headers = {
+            'content-type': 'application/json',
+            'Authorization': 'token ' + args.meterian_token
+        }
+
+        response = requests.get(where,params=params,headers=headers,timeout=10)
+        res_obj = json.loads(response.text)
+        security = res_obj['security']['assessments']
+        current_time = datetime.fromtimestamp(p_time / 1000, tz=timezone.utc)
+        print(current_time)
+        for assessment in security:
+            for report in assessment['reports']:
+                advisories = report['advices']
+
+                for advice in advisories:
+                    if advice['id'] not in prev_timestamp_map:
+                        prev_timestamp_map[advice['id']] = current_time
+                        vuln_age_tally_map[advice['id']] = timedelta(0)
+                        print(advice['id'])
+                        print(advice['description'])
+
+                    #print(advice)
+                    time_delta = current_time - prev_timestamp_map[advice['id']]
+                    vuln_age_tally_map[advice['id']] += time_delta
+                    prev_timestamp_map[advice['id']] = current_time
+                    #count_vuln(vuln_age_map,advice['id'])
+                    #print(advice['id'])
+
+        #print(json.dumps(security,indent=3))
+        print("===")
+        print(" ")
+    print (vuln_age_tally_map)
+    return vuln_age_tally_map
+
+
+def _send_vuln_age_to_dd(name,project_uuid, branch):
+    vuln_ages = _find_age(project_uuid, branch)
+    when = int(time.time())
+    metric_name = args.prefix + ".vulns.age"
+    print("metric name")
+    print(metric_name)
+    for adv_id, age in vuln_ages.items():
+        api.Metric.send(metric=metric_name,
+            points=[(when, age.days)],
+            tags=
+            [
+                'project:' + name,
+                'branch:' + branch,
+                'days_open:' + str(age.days),
+                'weeks_open:' + str(int(age.days/7)),
+                'id:' + adv_id
+            ],
+            type='gauge')
+
 def send_statistics(projects):
     for p in projects:
         name = p['name']
@@ -334,6 +417,7 @@ def send_statistics(projects):
             _send_score_to_dd(name, branch, 'stability', project_report)
             _send_score_to_dd(name, branch, 'licensing', project_report)
             _send_vulns_to_dd(name, branch, project_report)
+            _send_vuln_age_to_dd(name, p['uuid'], branch)
 
 
 def recompute_projects(projects):
@@ -366,7 +450,7 @@ if __name__ == '__main__':
 
     print('Collecting information from Meterian... (%s)' % args.meterian_env)
     projects = collect_projects_data()
-
+    _find_age(projects[0]['uuid'],projects[0]['branches'][0])
     if len(projects) > 0:
         print('\nUploading project statistics to DataDog...')
         send_statistics(projects)
