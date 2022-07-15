@@ -331,10 +331,10 @@ def _get_project_history(project_uuid, branch):
     }
     params = {
         'project': project_uuid,
-        'branch': branch
+        'branch': branch,
+        'limit': 100
     }
     response = requests.get(where, params=params, headers=headers, timeout=10)
-    print(response.text)
     res = json.loads(response.text)
     return res
 
@@ -356,7 +356,8 @@ def _get_adv_history(project_uuid, branch, pid_list):
         for assessment in security:
             for report in assessment['reports']:
                 for adv in report['advices']:
-                    tmp_advices.append(adv['id'])
+                    if 'exclusions' not in adv:
+                        tmp_advices.append(adv['id'])
 
         adv_history.append(tmp_advices)
 
@@ -375,7 +376,8 @@ def tally_time_delta(adv_id, adv_history, times):
                 latest_time = times[i]
         else:
             tally = timedelta(0)
-            latest_time = times[i]
+            if i + 1 < len(adv_history):
+                latest_time = times[i + 1]
 
     return tally
 
@@ -385,8 +387,6 @@ def _find_age(project_uuid,branch):
     pid_and_time = []
     pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
     pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
-    print(pid_and_time)
-    prev_timestamp_map = {}
     vuln_age_tally_map = {}
 
     adv_history = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
@@ -394,11 +394,8 @@ def _find_age(project_uuid,branch):
 
     times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
     for advisories in adv_history:
-        for adv in advisories:
-            vuln_age_tally_map[adv] = tally_time_delta(adv, adv_history, times)
-
-
-
+        for adv_id in advisories:
+            vuln_age_tally_map[adv_id] = tally_time_delta(adv_id,adv_history,times)
 
     return vuln_age_tally_map
 
@@ -407,10 +404,11 @@ def _send_vuln_age_to_dd(name,project_uuid, branch):
     vuln_ages = _find_age(project_uuid, branch)
     when = int(time.time())
     metric_name = args.prefix + ".vulns.age"
-    print("metric name")
-    print(metric_name)
+
     for adv_id, age in vuln_ages.items():
+        logging.debug("--vuln: %s, days_open: %d", adv_id, age.days)
         api.Metric.send(metric=metric_name,
+        
             points=[(when, age.days)],
             tags=
             [
@@ -466,7 +464,6 @@ if __name__ == '__main__':
 
     print('Collecting information from Meterian... (%s)' % args.meterian_env)
     projects = collect_projects_data()
-    _find_age(projects[0]['uuid'],projects[0]['branches'][0])
     if len(projects) > 0:
         print('\nUploading project statistics to DataDog...')
         send_statistics(projects)
