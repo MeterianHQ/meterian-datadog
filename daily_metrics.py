@@ -323,7 +323,7 @@ def _send_vulns_to_dd(name, branch, project_report):
         type='gauge')
 
 
-def _get_history(project_uuid,branch):
+def _get_project_history(project_uuid, branch):
     where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/history"
     headers = {
         'content-type': 'application/json',
@@ -338,52 +338,68 @@ def _get_history(project_uuid,branch):
     res = json.loads(response.text)
     return res
 
+def _get_adv_history(project_uuid, branch, pid_list):
 
-def _find_age(project_uuid,branch):
-    res = _get_history(project_uuid,branch)
-    pid_and_time = []
-    pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
-    pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
-    print(pid_and_time)
-
-    prev_timestamp_map = {}
-    vuln_age_tally_map = {}
-
-    for (pid,p_time) in pid_and_time:
-        where = "https://"+args.meterian_env+".meterian.com/api/v1/reports/"+project_uuid+"/full/"+pid
+    adv_history = []
+    for pid in pid_list:
+        where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/full/" + pid
         params = {'branch': branch}
         headers = {
             'content-type': 'application/json',
             'Authorization': 'token ' + args.meterian_token
         }
 
-        response = requests.get(where,params=params,headers=headers,timeout=10)
+        response = requests.get(where, params=params, headers=headers, timeout=10)
         res_obj = json.loads(response.text)
         security = res_obj['security']['assessments']
-        current_time = datetime.fromtimestamp(p_time / 1000, tz=timezone.utc)
-        print(current_time)
+        tmp_advices = []
         for assessment in security:
             for report in assessment['reports']:
-                advisories = report['advices']
+                for adv in report['advices']:
+                    tmp_advices.append(adv['id'])
 
-                for advice in advisories:
-                    if advice['id'] not in prev_timestamp_map:
-                        prev_timestamp_map[advice['id']] = current_time
-                        vuln_age_tally_map[advice['id']] = timedelta(0)
-                        print(advice['id'])
-                        print(advice['description'])
+        adv_history.append(tmp_advices)
 
-                    #print(advice)
-                    time_delta = current_time - prev_timestamp_map[advice['id']]
-                    vuln_age_tally_map[advice['id']] += time_delta
-                    prev_timestamp_map[advice['id']] = current_time
-                    #count_vuln(vuln_age_map,advice['id'])
-                    #print(advice['id'])
+    return adv_history
 
-        #print(json.dumps(security,indent=3))
-        print("===")
-        print(" ")
-    print (vuln_age_tally_map)
+
+def tally_time_delta(adv_id, adv_history, times):
+    tally = timedelta(0)
+    latest_time = timedelta(0)
+    for i in range(len(adv_history)):
+        if adv_id in adv_history[i]:
+            if tally == timedelta(0) and latest_time == timedelta(0):
+                latest_time = times[i]
+            else:
+                tally += times[i] - latest_time
+                latest_time = times[i]
+        else:
+            tally = timedelta(0)
+            latest_time = times[i]
+
+    return tally
+
+
+def _find_age(project_uuid,branch):
+    res = _get_project_history(project_uuid, branch)
+    pid_and_time = []
+    pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
+    pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
+    print(pid_and_time)
+    prev_timestamp_map = {}
+    vuln_age_tally_map = {}
+
+    adv_history = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
+    time_tally = timedelta(0)
+
+    times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
+    for advisories in adv_history:
+        for adv in advisories:
+            vuln_age_tally_map[adv] = tally_time_delta(adv, adv_history, times)
+
+
+
+
     return vuln_age_tally_map
 
 
