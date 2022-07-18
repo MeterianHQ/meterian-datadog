@@ -31,7 +31,7 @@ class AgeMetric():
 
     def to_arr(self):
         arr = []
-        arr.append("days_open:" + str(self.age.days))
+        arr.append("days_open:" + str(int(self.age.days)))
         arr.append("weeks_open:" + str(int(self.age.days/7)))
         arr.append("id:" + self.advice_id)
         arr.append("library:" + self.library)
@@ -413,15 +413,11 @@ def _find_age(project_uuid,branch):
     pid_and_time = []
     pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
     pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
-    vuln_age_tally_map = {}
 
     adv_history,adv_metric_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
-    time_tally = timedelta(0)
-
     times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
     for advisories in adv_history:
         for adv_id in advisories:
-            logging.debug("adv: %s lib: %s", adv_id, adv_metric_map[adv_id].library)
             adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
 
     return adv_metric_map
@@ -433,23 +429,18 @@ def _send_vuln_age_to_dd(name,project_uuid, branch):
     metric_name = args.prefix + ".vulns.age"
 
     for adv_id,age_metric in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, days_open: %d", adv_id, age_metric.library, age_metric.age.days)
-        metric_tags = ['project:' + name, 'branch:' + branch, age_metric.to_arr()]
-        print(metric_tags)
-        """
+        logging.debug("--vuln: %s, lib: %s, days_open: %d", age_metric.advice_id, age_metric.library, age_metric.age.days)
+        metric_tags = ['project:' + name, 'branch:' + branch]
+        for tag in age_metric.to_arr():
+            metric_tags.append(tag)
+
+        logging.debug(metric_tags)
+
         api.Metric.send(metric=metric_name,
-            points=[(when, age.days)],
-            tags=
-            [
-                'project:' + name,
-                'branch:' + branch,
-                'days_open:' + str(age.days),
-                'weeks_open:' + str(int(age.days/7)),
-                'id:' + adv_id,
-                'library:' + library
-            ],
+            points=[(when, int(age_metric.age.days))],
+            tags=metric_tags,
             type='gauge')
-        """
+
 def send_statistics(projects):
     for p in projects:
         name = p['name']
