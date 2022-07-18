@@ -22,6 +22,24 @@ class HelpingParser(argparse.ArgumentParser):
         sys.stderr.write('\n')
         sys.exit(-1)
 
+class AgeMetric():
+    def __init__(self, advice_id, library, age=timedelta(0), cve=None):
+        self.advice_id = advice_id
+        self.age = age
+        self.library = library
+        self.cve = cve
+
+    def to_arr(self):
+        arr = []
+        arr.append("days_open:" + str(self.age.days))
+        arr.append("weeks_open:" + str(int(self.age.days/7)))
+        arr.append("id:" + self.advice_id)
+        arr.append("library:" + self.library)
+
+        if self.cve is not None:
+            arr.append("cve:" + self.cve)
+
+        return arr
 
 def _logHttpRequests():
     http.client.HTTPConnection.debuglevel = 1
@@ -341,7 +359,7 @@ def _get_project_history(project_uuid, branch):
 def _get_adv_history(project_uuid, branch, pid_list):
 
     adv_history = []
-    id_lib_map = {}
+    adv_metric_map = {}
     for pid in pid_list:
         where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/full/" + pid
         params = {'branch': branch}
@@ -359,13 +377,17 @@ def _get_adv_history(project_uuid, branch, pid_list):
                 for adv in report['advices']:
                     if 'exclusions' not in adv:
                         tmp_advices.append(adv['id'])
-                        if adv['id'] not in id_lib_map:
+                        if adv['id'] not in adv_metric_map:
                             logging.debug("LIBRA %s",str(adv['library']['name']))
-                            id_lib_map[adv['id']] = adv['library']['name']
+                            adv_metric_map[adv['id']] = AgeMetric(
+                                advice_id=adv['id'],
+                                library=adv['library']['name'],
+                                cve=adv['cve'] if adv['cve'] else None
+                            )
 
         adv_history.append(tmp_advices)
 
-    return (adv_history, id_lib_map)
+    return (adv_history, adv_metric_map)
 
 
 def tally_time_delta(adv_id, adv_history, times):
@@ -393,26 +415,28 @@ def _find_age(project_uuid,branch):
     pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
     vuln_age_tally_map = {}
 
-    adv_history, id_lib_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
+    adv_history,adv_metric_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
     time_tally = timedelta(0)
 
     times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
     for advisories in adv_history:
         for adv_id in advisories:
-            logging.debug("adv: %s lib: %s", adv_id, id_lib_map[adv_id])
-            vuln_age_tally_map[adv_id] = tally_time_delta(adv_id, adv_history, times)
+            logging.debug("adv: %s lib: %s", adv_id, adv_metric_map[adv_id].library)
+            adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
 
-    return vuln_age_tally_map,id_lib_map
+    return adv_metric_map
 
 
 def _send_vuln_age_to_dd(name,project_uuid, branch):
-    vuln_ages, id_lib_map = _find_age(project_uuid, branch)
+    vuln_ages = _find_age(project_uuid, branch)
     when = int(time.time())
     metric_name = args.prefix + ".vulns.age"
 
-    for adv_id, age in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, days_open: %d", adv_id,id_lib_map[adv_id], age.days)
-        library = str(id_lib_map[adv_id])
+    for adv_id,age_metric in vuln_ages.items():
+        logging.debug("--vuln: %s, lib: %s, days_open: %d", adv_id, age_metric.library, age_metric.age.days)
+        metric_tags = ['project:' + name, 'branch:' + branch, age_metric.to_arr()]
+        print(metric_tags)
+        """
         api.Metric.send(metric=metric_name,
             points=[(when, age.days)],
             tags=
@@ -425,7 +449,7 @@ def _send_vuln_age_to_dd(name,project_uuid, branch):
                 'library:' + library
             ],
             type='gauge')
-
+        """
 def send_statistics(projects):
     for p in projects:
         name = p['name']
