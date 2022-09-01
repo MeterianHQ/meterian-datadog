@@ -9,10 +9,15 @@ import requests
 import sys
 import time
 
-from datadog import initialize, api
+from datadog import initialize, api, statsd
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
+options = {
+    'statsd_host':'127.0.0.1',
+    'statsd_port':8125
+}
+initialize(**options)
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
 class HelpingParser(argparse.ArgumentParser):
@@ -23,23 +28,27 @@ class HelpingParser(argparse.ArgumentParser):
         sys.exit(-1)
 
 class AgeMetric():
-    def __init__(self, advice_id, library, age=timedelta(0), cve=None):
+    def __init__(self, advice_id, library, age=timedelta(0), cve=None,severity=None):
         self.advice_id = advice_id
         self.age = age
         self.library = library
         self.cve = cve
+        self.severity = severity
 
     def to_arr(self):
         arr = []
-        arr.append("days_open:" + str(int(self.age.days)))
-        arr.append("weeks_open:" + str(int(self.age.days/7)))
-        arr.append("id:" + self.advice_id)
-        arr.append("library:" + self.library)
 
+        arr.append("library:" + self.library)
         if self.cve is not None:
             arr.append("cve:" + self.cve)
 
+        if self.severity is not None:
+            arr.append("severity:"+self.severity)
+
         return arr
+
+    def get_age(self):
+        return self.age.days
 
 def _logHttpRequests():
     http.client.HTTPConnection.debuglevel = 1
@@ -382,7 +391,8 @@ def _get_adv_history(project_uuid, branch, pid_list):
                             adv_metric_map[adv['id']] = AgeMetric(
                                 advice_id=adv['id'],
                                 library=adv['library']['name'],
-                                cve=adv['cve'] if adv['cve'] else None
+                                cve=adv['cve'] if adv['cve'] else None,
+                                severity=adv['severity']
                             )
 
         adv_history.append(tmp_advices)
@@ -426,20 +436,22 @@ def _find_age(project_uuid,branch):
 def _send_vuln_age_to_dd(name,project_uuid, branch):
     vuln_ages = _find_age(project_uuid, branch)
     when = int(time.time())
-    metric_name = args.prefix + ".vulns.age"
+    #metric_name = args.prefix + ".vulns.age.distribution.dd"
+    metric_name = "dist.meterian.vulns.age"
 
     for adv_id,age_metric in vuln_ages.items():
         logging.debug("--vuln: %s, lib: %s, days_open: %d", age_metric.advice_id, age_metric.library, age_metric.age.days)
         metric_tags = ['project:' + name, 'branch:' + branch]
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
-
         logging.debug(metric_tags)
-
+        """
         api.Metric.send(metric=metric_name,
-            points=[(when, int(age_metric.age.days))],
-            tags=metric_tags,
-            type='gauge')
+                        points=[(when, age_metric.get_age())],
+                        tags=metric_tags,
+                        type='distribution')
+        """
+        statsd.distribution(metric_name,age_metric.get_age(),tags=metric_tags)
 
 def send_statistics(projects):
     for p in projects:
@@ -453,7 +465,6 @@ def send_statistics(projects):
             _send_score_to_dd(name, branch, 'licensing', project_report)
             _send_vulns_to_dd(name, branch, project_report)
             _send_vuln_age_to_dd(name, p['uuid'], branch)
-
 
 def recompute_projects(projects):
     for p in projects:
