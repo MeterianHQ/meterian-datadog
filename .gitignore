@@ -132,3 +132,5 @@ dmypy.json
 .project
 .pydevproject
 
+# Intellij files
+.idea
