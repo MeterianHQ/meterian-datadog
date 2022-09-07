@@ -417,6 +417,11 @@ def tally_time_delta(adv_id, adv_history, times):
 
     return tally
 
+def add_today_to_project_history(times, adv_history):
+    times.append(datetime.now(tz=timezone.utc))
+    if adv_history is not None:
+        last_adv = adv_history[-1]
+        adv_history.append(last_adv)
 
 def _find_age(project_uuid,branch):
     res = _get_project_history(project_uuid, branch)
@@ -426,6 +431,7 @@ def _find_age(project_uuid,branch):
 
     adv_history,adv_metric_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
     times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
+    add_today_to_project_history(times, adv_history)
     for advisories in adv_history:
         for adv_id in advisories:
             adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
@@ -435,9 +441,7 @@ def _find_age(project_uuid,branch):
 
 def _send_vuln_age_to_dd(name,project_uuid, branch):
     vuln_ages = _find_age(project_uuid, branch)
-    when = int(time.time())
-    #metric_name = args.prefix + ".vulns.age.distribution.dd"
-    metric_name = "dist.meterian.vulns.age"
+    metric_name = args.prefix + ".vulns.age.distribution"
 
     for adv_id,age_metric in vuln_ages.items():
         logging.debug("--vuln: %s, lib: %s, days_open: %d", age_metric.advice_id, age_metric.library, age_metric.age.days)
@@ -445,12 +449,6 @@ def _send_vuln_age_to_dd(name,project_uuid, branch):
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
         logging.debug(metric_tags)
-        """
-        api.Metric.send(metric=metric_name,
-                        points=[(when, age_metric.get_age())],
-                        tags=metric_tags,
-                        type='distribution')
-        """
         statsd.distribution(metric_name,age_metric.get_age(),tags=metric_tags)
 
 def send_statistics(projects):
