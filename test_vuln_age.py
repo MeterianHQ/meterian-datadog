@@ -59,7 +59,7 @@ class TestVulnAge(unittest.TestCase):
         times = [two_days_ago, self.yesterday]
         adv_history = [[adv_id], [adv_id]]
 
-        add_today_to_project_history(times, adv_history)
+        append_date_to_project_history(times, adv_history, datetime.now(tz=timezone.utc))
         age = tally_time_delta(adv_id,adv_history,times)
 
         assert len(times) == 3
@@ -76,7 +76,7 @@ class TestVulnAge(unittest.TestCase):
         adv_history = [yesterdays_adv]
         times = [self.yesterday]
 
-        add_today_to_project_history(times, adv_history)
+        append_date_to_project_history(times, adv_history, datetime.now(tz=timezone.utc))
 
         assert len(times) == 2
         assert len(adv_history) == 2
@@ -90,7 +90,37 @@ class TestVulnAge(unittest.TestCase):
         adv_history = [oldest_adv, []]
         times = [oldest_date,self.yesterday]
 
-        add_today_to_project_history(times, adv_history)
+        append_date_to_project_history(times, adv_history, datetime.now(tz=timezone.utc))
         age = tally_time_delta(adv_id,adv_history,times)
 
         assert age.days == 0
+
+    def testCanOnlyAppendToProjectHistoryInChronologicalOrder(self):
+        adv_a = "a"
+        adv_b = "b"
+        adv_c = "c"
+        adv_history = [[adv_a], [adv_b], [adv_c]]
+        last_week = self.today - timedelta(days=7)
+        five_days_ago = self.today - timedelta(days=5)
+        two_weeks_ago = self.today - timedelta(days=14)
+        times = [last_week,five_days_ago,self.today]
+
+        append_date_to_project_history(times,adv_history,two_weeks_ago)
+
+        assert adv_history == [[adv_a], [adv_b], [adv_c]]
+        assert times == [last_week,five_days_ago,self.today]
+
+
+    def testShouldFilterDatesInChronologicalOrder(self):
+        two_weeks_ago = self.today - timedelta(days=14)
+        some_time_last_week = self.today - timedelta(days=8)
+        last_week = self.today - timedelta(days=7)
+        history = [("a",two_weeks_ago),("b",some_time_last_week),("c",self.yesterday),("d",self.today)]
+
+        last_weeks_history = filter_project_history_by_date(history,start_date=None,end_date=last_week)
+        this_weeks_history = filter_project_history_by_date(history,start_date=last_week,end_date=None)
+        project_b = filter_project_history_by_date(history,start_date= self.today - timedelta(days=10),end_date=last_week)
+
+        assert last_weeks_history == [("a", two_weeks_ago), ("b", some_time_last_week)]
+        assert this_weeks_history == [("c", self.yesterday), ("d", self.today)]
+        assert project_b == [("b",some_time_last_week)]

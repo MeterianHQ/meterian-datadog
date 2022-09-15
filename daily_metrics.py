@@ -50,6 +50,12 @@ class AgeMetric():
     def get_age(self):
         return self.age.days
 
+    def get_hours(self):
+        return self.age.days * 24
+
+    def get_mins(self):
+        return self.age.seconds / 60
+
 def _logHttpRequests():
     http.client.HTTPConnection.debuglevel = 1
 
@@ -143,6 +149,26 @@ def _parseArgs():
     )
 
     parser.add_argument(
+        '--vuln-age-start-date',
+        metavar='START_DATE',
+        default=None,
+        help=(
+            'Ensures that only the data which comes from reports after the given date is used to calculate vulnerability age.\n'
+            'Should be formatted as YYYY/MM/DD e.g 2020/05/01'
+        )
+    )
+
+    parser.add_argument(
+        '--vuln-age-end-date',
+        metavar='END_DATE',
+        default=None,
+        help=(
+            'Ensures that only the data which comes from reports before the given date is used to calculate vulnerability age.\n'
+            'Should be formatted as YYYY/MM/DD e.g 2020/05/08'
+        )
+    )
+
+    parser.add_argument(
         '-l',
         '--log',
         default='warning',
@@ -160,6 +186,15 @@ def _parseArgs():
     args.branches = _split_by_comma(args.branches)
     args.projects = _split_by_comma(args.projects)
 
+    if args.vuln_age_start_date is not None:
+        args.vuln_age_time_period_start = _parse_date_str_as_utc(args.vuln_age_start_date)
+    else:
+        args.vuln_age_time_period_start = None
+
+    if args.vuln_age_end_date is not None:
+        args.vuln_age_time_period_end = _parse_date_str_as_utc(args.vuln_age_end_date)
+    else:
+        args.vuln_age_time_period_end = None
 
     return args
 
@@ -168,6 +203,10 @@ def _split_by_comma(text):
         return [x.strip() for x in text.split(',')]
     else:
         return None
+
+def _parse_date_str_as_utc(str):
+    return datetime.strptime(str,"%Y/%m/%d").replace(tzinfo=timezone.utc)
+
 
 def _initLogging(args):
     levels = {
@@ -387,7 +426,6 @@ def _get_adv_history(project_uuid, branch, pid_list):
                     if 'exclusions' not in adv:
                         tmp_advices.append(adv['id'])
                         if adv['id'] not in adv_metric_map:
-                            logging.debug("LIBRA %s",str(adv['library']['name']))
                             adv_metric_map[adv['id']] = AgeMetric(
                                 advice_id=adv['id'],
                                 library=adv['library']['name'],
@@ -417,21 +455,55 @@ def tally_time_delta(adv_id, adv_history, times):
 
     return tally
 
-def add_today_to_project_history(times, adv_history):
-    times.append(datetime.now(tz=timezone.utc))
+
+def append_date_to_project_history(times, adv_history, new_time):
+    if(times[-1] > new_time):
+        logging.warning("attempted to add an entry in non-chronological order, it will be ignored")
+        return
+
+    times.append(new_time)
     if adv_history is not None:
         last_adv = adv_history[-1]
         adv_history.append(last_adv)
 
-def _find_age(project_uuid,branch):
+
+def filter_project_history_by_date(pid_and_time,start_date,end_date):
+    filtered = pid_and_time
+    if start_date is not None:
+        logging.info('start date: %s',start_date)
+        filtered = list(filter(lambda entry:  entry[1] >= start_date, filtered))
+
+    if end_date is not None:
+        logging.info('end date: %s',end_date)
+
+        filtered = list(filter(lambda entry: entry[1] <= end_date,filtered))
+
+    return filtered
+
+
+def _find_age(project_uuid,branch,start_date,end_date):
     res = _get_project_history(project_uuid, branch)
     pid_and_time = []
     pid_and_time = list(map(lambda p_id: (p_id['uuid'],p_id['timestamp']),res))
     pid_and_time = sorted(pid_and_time, key=lambda t: t[1])
+    pid_and_time = list(map(lambda history: (history[0],datetime.fromtimestamp(history[1]/1000, tz=timezone.utc)),pid_and_time))
+    logging.debug("start: %s, end %s",start_date,end_date)
+    pid_and_time = filter_project_history_by_date(pid_and_time, start_date, end_date)
+    logging.debug("filtered history<<%s>>",pid_and_time)
+
+    if not pid_and_time:
+        logging.warning("empty history after filtered by date, will be skipped")
+        return None
+
 
     adv_history,adv_metric_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
-    times = list(map(lambda t: datetime.fromtimestamp(t[1]/1000, tz=timezone.utc), pid_and_time))
-    add_today_to_project_history(times, adv_history)
+    times = list(map(lambda t: t[1], pid_and_time))
+
+    if end_date is None:
+        append_date_to_project_history(times, adv_history,datetime.now(tz=timezone.utc))
+    else:
+        append_date_to_project_history(times, adv_history, end_date)
+
     for advisories in adv_history:
         for adv_id in advisories:
             adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
@@ -439,19 +511,23 @@ def _find_age(project_uuid,branch):
     return adv_metric_map
 
 
-def _send_vuln_age_to_dd(name,project_uuid, branch):
-    vuln_ages = _find_age(project_uuid, branch)
+def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
+    vuln_ages = _find_age(project_uuid, branch,start_date,end_date)
+    if not vuln_ages:
+        logging.warning("could not calculate ages for %s",name)
+        return
+
     metric_name = args.prefix + ".vulns.age.distribution"
 
     for adv_id,age_metric in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, days_open: %d", age_metric.advice_id, age_metric.library, age_metric.age.days)
+        logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
         metric_tags = ['project:' + name, 'branch:' + branch]
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
         logging.debug(metric_tags)
-        statsd.distribution(metric_name,age_metric.get_age(),tags=metric_tags)
+        statsd.distribution(metric_name,age_metric.get_mins(),tags=metric_tags)
 
-def send_statistics(projects):
+def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end):
     for p in projects:
         name = p['name']
         for branch in p['branches']:
@@ -462,7 +538,7 @@ def send_statistics(projects):
             _send_score_to_dd(name, branch, 'stability', project_report)
             _send_score_to_dd(name, branch, 'licensing', project_report)
             _send_vulns_to_dd(name, branch, project_report)
-            _send_vuln_age_to_dd(name, p['uuid'], branch)
+            _send_vuln_age_to_dd(name, p['uuid'], branch,vuln_age_time_period_start,vuln_age_time_period_end)
 
 def recompute_projects(projects):
     for p in projects:
@@ -496,6 +572,7 @@ if __name__ == '__main__':
     projects = collect_projects_data()
     if len(projects) > 0:
         print('\nUploading project statistics to DataDog...')
-        send_statistics(projects)
+
+        send_statistics(projects, args.vuln_age_time_period_start, args.vuln_age_time_period_end)
     else:
         print('No projects were selected!')
