@@ -9,15 +9,17 @@ import requests
 import sys
 import time
 
-from datadog import initialize, api, statsd
+from datadog import initialize, api
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from datadog_api_client import ApiClient, Configuration
+from datadog_api_client.v1.api.metrics_api import MetricsApi
+from datadog_api_client.v1.model.distribution_point import DistributionPoint
+from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
+from datadog_api_client.v1.model.distribution_points_payload import DistributionPointsPayload
+from datadog_api_client.v1.model.distribution_points_series import DistributionPointsSeries
 
-options = {
-    'statsd_host':'127.0.0.1',
-    'statsd_port':8125
-}
-initialize(**options)
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
 class HelpingParser(argparse.ArgumentParser):
@@ -525,7 +527,34 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
         logging.debug(metric_tags)
-        statsd.distribution(metric_name,age_metric.get_mins(),tags=metric_tags)
+        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+
+def _send_distribution_to_metric_endpoint(metric_name,value,tags):
+    body = DistributionPointsPayload(
+        series=[
+            DistributionPointsSeries(
+                metric=metric_name,
+                points=[
+                    DistributionPoint(
+                        [
+                            datetime.now().timestamp(),
+                            [value],
+                        ]
+                    ),
+                ],
+                tags=tags
+            ),
+        ],
+    )
+    config = Configuration(host=args.dd_host,api_key={'apiKeyAuth': args.dd_apikey})
+
+    with ApiClient(config) as api_client:
+        instance = MetricsApi(api_client)
+        res = instance.submit_distribution_points(
+            content_encoding=DistributionPointsContentEncoding("deflate"), body=body
+        )
+        logging.info("%s",res)
+
 
 def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end):
     for p in projects:
@@ -573,6 +602,6 @@ if __name__ == '__main__':
     if len(projects) > 0:
         print('\nUploading project statistics to DataDog...')
 
-        send_statistics(projects, args.vuln_age_time_period_start, args.vuln_age_time_period_end)
+        send_statistics(projects,args.vuln_age_time_period_start, args.vuln_age_time_period_end)
     else:
         print('No projects were selected!')
