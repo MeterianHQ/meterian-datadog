@@ -522,12 +522,12 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
     metric_name = args.prefix + ".vulns.age.distribution"
 
     for adv_id,age_metric in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
+        logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
         metric_tags = ['project:' + name, 'branch:' + branch]
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
         logging.debug(metric_tags)
-        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_age(),tags=metric_tags)
 
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
     body = DistributionPointsPayload(
