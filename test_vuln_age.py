@@ -13,7 +13,7 @@ class TestVulnAge(unittest.TestCase):
 
         assert td.days == 2
 
-    def testAgeStopsOnceMitigated(self):
+    def testAgeFreezesOnceMitigated(self):
         times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1)]
         adv_history = [["abcdef"], ["abcdef"], []]
         adv_history_1 = [["abcdef"], ["abcdef"], [], []]
@@ -23,17 +23,24 @@ class TestVulnAge(unittest.TestCase):
         td = tally_time_delta(adv_id, adv_history, times)
         td_1 = tally_time_delta(adv_id,adv_history_1,times_1)
 
-        assert td.days == 0
-        assert td_1.days == 0
+        assert td.days == 2
+        assert td_1.days == 2
 
-    def testAgeShouldBeResetIfVulnReintroduced(self):
-        times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1),datetime(day=6,month=1,year=1)]
-        adv_history = [["abcdef"], [], ["abcdef"],["abcdef"]]
+    def testAgeShouldPersistIfVulnReintroduced(self):
+        times = [
+            datetime(day=1, month=1, year=1),
+            datetime(day=2, month=1, year=1),
+            datetime(day=4, month=1, year=1),
+            datetime(day=6, month=1, year=1),
+            datetime(day=8, month=1, year=1)
+
+        ]
         adv_id = "abcdef"
+        adv_history = [[adv_id], [adv_id],[], [adv_id],[adv_id]]
 
         td = tally_time_delta(adv_id, adv_history, times)
-
-        assert td.days == 2, "age should reset once vulnerability is mitigated, if it reappears a new count starts"
+        print("days",td.days)
+        assert td.days == 3, "age should continue from where it left off."
 
     def testCorrectAgeIfNew(self):
         times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1)]

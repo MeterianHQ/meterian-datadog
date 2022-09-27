@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from datetime import datetime
 from datadog_api_client import ApiClient, Configuration
 from datadog_api_client.v1.api.metrics_api import MetricsApi
+from datadog_api_client.v1.model.metric_metadata import MetricMetadata
 from datadog_api_client.v1.model.distribution_point import DistributionPoint
 from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
 from datadog_api_client.v1.model.distribution_points_payload import DistributionPointsPayload
@@ -451,9 +452,9 @@ def tally_time_delta(adv_id, adv_history, times):
                 tally += times[i] - latest_time
                 latest_time = times[i]
         else:
-            tally = timedelta(0)
             if i + 1 < len(adv_history):
                 latest_time = times[i + 1]
+
 
     return tally
 
@@ -528,6 +529,19 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
             metric_tags.append(tag)
         logging.debug(metric_tags)
         _send_distribution_to_metric_endpoint(metric_name,age_metric.get_age(),tags=metric_tags)
+
+
+def _configure_distribution_metric(metric_name):
+    body = MetricMetadata(
+        unit="day"
+    )
+    config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey})
+    with ApiClient(config) as api_client:
+        api_instance = MetricsApi(api_client)
+        response = api_instance.update_metric_metadata(metric_name=metric_name, body=body)
+        print(response)
+
+
 
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
     body = DistributionPointsPayload(
