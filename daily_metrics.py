@@ -498,7 +498,6 @@ def _find_age(project_uuid,branch,start_date,end_date):
         logging.warning("empty history after filtered by date, will be skipped")
         return None
 
-
     adv_history,adv_metric_map = _get_adv_history(project_uuid, branch, list(map(lambda p_id: p_id[0], pid_and_time)))
     times = list(map(lambda t: t[1], pid_and_time))
 
@@ -535,11 +534,12 @@ def _configure_distribution_metric(metric_name):
     body = MetricMetadata(
         unit="day"
     )
-    config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey})
+    config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
     with ApiClient(config) as api_client:
+        logging.info("configuring %s metric",metric_name)
         api_instance = MetricsApi(api_client)
         response = api_instance.update_metric_metadata(metric_name=metric_name, body=body)
-        print(response)
+        logging.info("%s",response)
 
 
 
@@ -571,6 +571,8 @@ def _send_distribution_to_metric_endpoint(metric_name,value,tags):
 
 
 def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end):
+    dist_metric_name = args.prefix + ".vulns.age.distribution"
+    _configure_distribution_metric(dist_metric_name)
     for p in projects:
         name = p['name']
         for branch in p['branches']:
