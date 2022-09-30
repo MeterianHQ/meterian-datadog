@@ -13,6 +13,29 @@ class TestVulnAge(unittest.TestCase):
 
         assert td.days == 2
 
+    def testAgeShouldRespectTimePassedBetweenReports(self):
+        times = [datetime(day=1, month=1, year=1), datetime(day=8, month=1, year=1)]
+        adv_history = [["abcdef"], []]
+        adv_id = "abcdef"
+
+        td = tally_time_delta(adv_id, adv_history, times)
+
+        assert td.days == 7
+
+    def testZeroDaysAreCalculatedCorrectly(self):
+        times = [
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=8, month=1, year=1)
+        ]
+        adv_history = [["abcdef"], [], [], []]
+        adv_id = "abcdef"
+
+        td = tally_time_delta(adv_id, adv_history, times)
+
+        assert td.days == 0
+
     def testAgeFreezesOnceMitigated(self):
         times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1)]
         adv_history = [["abcdef"], ["abcdef"], []]
@@ -95,7 +118,7 @@ class TestVulnAge(unittest.TestCase):
         oldest_adv = [adv_id]
         oldest_date = self.today - timedelta(days=2)
         adv_history = [oldest_adv, []]
-        times = [oldest_date,self.yesterday]
+        times = [oldest_date,oldest_date]
 
         append_date_to_project_history(times, adv_history, datetime.now(tz=timezone.utc))
         age = tally_time_delta(adv_id,adv_history,times)

@@ -4,6 +4,7 @@ import argparse
 import http.client
 import json
 import logging
+import math
 import os
 import requests
 import sys
@@ -51,13 +52,13 @@ class AgeMetric():
         return arr
 
     def get_age(self):
-        return self.age.days
+        return math.floor(self.age.days)
 
     def get_hours(self):
         return self.age.days * 24
 
     def get_mins(self):
-        return self.age.seconds / 60
+        return math.floor(self.age.seconds / 60)
 
 def _logHttpRequests():
     http.client.HTTPConnection.debuglevel = 1
@@ -448,6 +449,9 @@ def tally_time_delta(adv_id, adv_history, times):
         if adv_id in adv_history[i]:
             if tally == timedelta(0) and latest_time == timedelta(0):
                 latest_time = times[i]
+                if i + 1 < len(adv_history):
+                    tally = times[i + 1] - times[i]
+                    latest_time = times[i+1]
             else:
                 tally += times[i] - latest_time
                 latest_time = times[i]
@@ -522,12 +526,12 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
     metric_name = args.prefix + ".vulns.age.distribution"
 
     for adv_id,age_metric in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
+        logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
         metric_tags = ['project:' + name, 'branch:' + branch]
         for tag in age_metric.to_arr():
             metric_tags.append(tag)
         logging.debug(metric_tags)
-        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_age(),tags=metric_tags)
+        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
 
 
 def _configure_distribution_metric(metric_name):
