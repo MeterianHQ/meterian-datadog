@@ -6,11 +6,15 @@ import json
 import logging
 import math
 import os
+
+import datadog_api_client.exceptions
 import requests
 import sys
 import time
 
 from datadog import initialize, api
+from datadog.api.exceptions import DatadogException
+from datadog_api_client.exceptions import ApiException
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from datetime import datetime
@@ -59,6 +63,11 @@ class AgeMetric():
 
     def get_mins(self):
         return math.floor(self.age.seconds / 60)
+
+def exit_with_err_msg(msg):
+    print("FAILURE: " + msg)
+    exit(1)
+
 
 def _logHttpRequests():
     http.client.HTTPConnection.debuglevel = 1
@@ -334,17 +343,20 @@ def _load_or_recompute_project_report(name, uuid, branch):
 
 
 def _send_score_to_dd(name, branch, stype, project_report):
-    if stype in project_report:
-        report = project_report[stype]
-        if 'score' in report:
-            score = report['score']
-            metric_name = args.prefix + '.projects.scores.' + stype
-            logging.debug("- updating metric %s for project %s/%s", metric_name, name, branch)
-            api.Metric.send(metric=metric_name,
-                points=[(int(time.time()), score)],
-                tags=['project:' + name, 'branch:' + branch],
-                type='gauge')
+    try:
+        if stype in project_report:
+            report = project_report[stype]
+            if 'score' in report:
+                score = report['score']
+                metric_name = args.prefix + '.projects.scores.' + stype
+                logging.debug("- updating metric %s for project %s/%s", metric_name, name, branch)
+                api.Metric.send(metric=metric_name,
+                    points=[(int(time.time()), score)],
+                    tags=['project:' + name, 'branch:' + branch],
+                    type='gauge')
 
+    except Exception as e:
+        exit_with_err_msg(str(e))
 
 def _send_vulns_to_dd(name, branch, project_report):
     excl_count = 0
@@ -352,46 +364,47 @@ def _send_vulns_to_dd(name, branch, project_report):
     high_count = 0
     med_count  = 0
     low_count  = 0
+    try:
+        if 'security' in project_report:
+            security_report = project_report['security']
+            for assessment in security_report['assessments']:
+                for report in assessment['reports']:
+                    for advice in report['advices']:
+                        if 'exclusions' in advice:
+                            excl_count = excl_count +1
+                        else:
+                            severity = advice['severity']
+                            if severity == 'CRITICAL':
+                                crit_count+=1
+                            elif severity == 'HIGH':
+                                high_count+=1
+                            elif severity == 'MEDIUM':
+                                med_count+=1
+                            elif severity == 'LOW':
+                                low_count+=1
 
-    if 'security' in project_report:
-        security_report = project_report['security']
-        for assessment in security_report['assessments']:
-            for report in assessment['reports']:
-                for advice in report['advices']:
-                    if 'exclusions' in advice:
-                        excl_count = excl_count +1
-                    else:
-                        severity = advice['severity']
-                        if severity == 'CRITICAL':
-                            crit_count+=1
-                        elif severity == 'HIGH':
-                            high_count+=1
-                        elif severity == 'MEDIUM':
-                            med_count+=1
-                        elif severity == 'LOW':
-                            low_count+=1
+        when = int(time.time())
+        metric_name = args.prefix + '.projects.vulns'
+        logging.debug("- updating metric %s for project %s/%s - C/H/M/L: %d/%d/%d/%d (%d exclusions)", metric_name, name, branch, crit_count, high_count, med_count, low_count, excl_count)
 
-    when = int(time.time())
-    metric_name = args.prefix + '.projects.vulns'
-    logging.debug("- updating metric %s for project %s/%s - C/H/M/L: %d/%d/%d/%d (%d exclusions)", metric_name, name, branch, crit_count, high_count, med_count, low_count, excl_count)
-
-    api.Metric.send(metric=metric_name,
-        points=[(when, crit_count)],
-        tags=['project:' + name, 'branch:' + branch, 'severity:CRITICAL'],
-        type='gauge')
-    api.Metric.send(metric=metric_name,
-        points=[(when, high_count)],
-        tags=['project:' + name, 'branch:' + branch, 'severity:HIGH'],
-        type='gauge')
-    api.Metric.send(metric=metric_name,
-        points=[(when, med_count)],
-        tags=['project:' + name, 'branch:' + branch, 'severity:MEDIUM'],
-        type='gauge')
-    api.Metric.send(metric=metric_name,
-        points=[(when, low_count)],
-        tags=['project:' + name, 'branch:' + branch, 'severity:LOW'],
-        type='gauge')
-
+        api.Metric.send(metric=metric_name,
+            points=[(when, crit_count)],
+            tags=['project:' + name, 'branch:' + branch, 'severity:CRITICAL'],
+            type='gauge')
+        api.Metric.send(metric=metric_name,
+            points=[(when, high_count)],
+            tags=['project:' + name, 'branch:' + branch, 'severity:HIGH'],
+            type='gauge')
+        api.Metric.send(metric=metric_name,
+            points=[(when, med_count)],
+            tags=['project:' + name, 'branch:' + branch, 'severity:MEDIUM'],
+            type='gauge')
+        api.Metric.send(metric=metric_name,
+            points=[(when, low_count)],
+            tags=['project:' + name, 'branch:' + branch, 'severity:LOW'],
+            type='gauge')
+    except Exception as e:
+        exit_with_err_msg(str(e))
 
 def _get_project_history(project_uuid, branch):
     where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/history"
@@ -520,58 +533,67 @@ def _find_age(project_uuid,branch,start_date,end_date):
 def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
     vuln_ages = _find_age(project_uuid, branch,start_date,end_date)
     if not vuln_ages:
-        logging.warning("could not calculate ages for %s",name)
-        return
+        exit_with_err_msg('could not calculate any ages for ' + name)
 
     metric_name = args.prefix + ".vulns.age.distribution"
+    try:
+        for adv_id,age_metric in vuln_ages.items():
+            logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
+            metric_tags = ['project:' + name, 'branch:' + branch]
+            for tag in age_metric.to_arr():
+                metric_tags.append(tag)
 
-    for adv_id,age_metric in vuln_ages.items():
-        logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
-        metric_tags = ['project:' + name, 'branch:' + branch]
-        for tag in age_metric.to_arr():
-            metric_tags.append(tag)
-        logging.debug(metric_tags)
-        _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+            logging.debug(metric_tags)
+            single_res = _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+
+    except Exception as e:
+        exit_with_err_msg(str(e))
 
 
 def _configure_distribution_metric(metric_name):
-    body = MetricMetadata(
-        unit="day"
-    )
-    config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
-    with ApiClient(config) as api_client:
-        logging.info("configuring %s metric",metric_name)
-        api_instance = MetricsApi(api_client)
-        response = api_instance.update_metric_metadata(metric_name=metric_name, body=body)
-        logging.info("%s",response)
+    try:
+        body = MetricMetadata(
+            unit="day"
+        )
+        config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
+        with ApiClient(config) as api_client:
+            logging.info("configuring %s metric",metric_name)
+            api_instance = MetricsApi(api_client)
+            response = api_instance.update_metric_metadata(metric_name=metric_name, body=body)
+            logging.info("SUCCESS %s",response)
 
+    except datadog_api_client.exceptions.ForbiddenException as e:
+        exit_with_err_msg('could not configure distribution metric, incorrect credentials')
 
 
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
-    body = DistributionPointsPayload(
-        series=[
-            DistributionPointsSeries(
-                metric=metric_name,
-                points=[
-                    DistributionPoint(
-                        [
-                            datetime.now().timestamp(),
-                            [value],
-                        ]
-                    ),
-                ],
-                tags=tags
-            ),
-        ],
-    )
-    config = Configuration(host=args.dd_host,api_key={'apiKeyAuth': args.dd_apikey})
-
-    with ApiClient(config) as api_client:
-        instance = MetricsApi(api_client)
-        res = instance.submit_distribution_points(
-            content_encoding=DistributionPointsContentEncoding("deflate"), body=body
+    try:
+        body = DistributionPointsPayload(
+            series=[
+                DistributionPointsSeries(
+                    metric=metric_name,
+                    points=[
+                        DistributionPoint(
+                            [
+                                datetime.now().timestamp(),
+                                [value],
+                            ]
+                        ),
+                    ],
+                    tags=tags
+                ),
+            ],
         )
-        logging.info("%s",res)
+        config = Configuration(host=args.dd_host,api_key={'apiKeyAuth': args.dd_apikey})
+
+        with ApiClient(config) as api_client:
+            instance = MetricsApi(api_client)
+            instance.submit_distribution_points(
+                content_encoding=DistributionPointsContentEncoding("deflate"), body=body
+            )
+
+    except datadog_api_client.exceptions.ForbiddenException as e:
+        exit_with_err_msg('could not send distribution metric, incorrect credentials')
 
 
 def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end):
@@ -581,13 +603,22 @@ def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end
         name = p['name']
         for branch in p['branches']:
             project_report = _load_or_recompute_project_report(name, p['uuid'], branch)
-
             print("Uploading data for project", p['name'], "branch", branch)
+            logging.info("sending scores for security section")
             _send_score_to_dd(name, branch, 'security',  project_report)
+
+            logging.info("sending scores for stability section")
             _send_score_to_dd(name, branch, 'stability', project_report)
+
+            logging.info("sending scores for licensing section")
             _send_score_to_dd(name, branch, 'licensing', project_report)
+
+            logging.info("sending vulnerability counts information")
             _send_vulns_to_dd(name, branch, project_report)
+
+            logging.info("sending vulnerability age information")
             _send_vuln_age_to_dd(name, p['uuid'], branch,vuln_age_time_period_start,vuln_age_time_period_end)
+
 
 def recompute_projects(projects):
     for p in projects:
@@ -623,5 +654,7 @@ if __name__ == '__main__':
         print('\nUploading project statistics to DataDog...')
 
         send_statistics(projects,args.vuln_age_time_period_start, args.vuln_age_time_period_end)
+        print('OK')
     else:
         print('No projects were selected!')
+        print('OK')
