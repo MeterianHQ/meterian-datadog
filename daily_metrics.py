@@ -25,6 +25,7 @@ from datadog_api_client.v1.model.distribution_point import DistributionPoint
 from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
 from datadog_api_client.v1.model.distribution_points_payload import DistributionPointsPayload
 from datadog_api_client.v1.model.distribution_points_series import DistributionPointsSeries
+from urllib3.exceptions import MaxRetryError
 
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
@@ -256,8 +257,16 @@ def _get_account_uuid(args):
 
     response = requests.get(where, headers=headers, timeout=10)
     if response.status_code != 200:
-        print ("Unable to collect account information at ", where, "\n", response)
-        sys.exit(-1)
+        if response.status_code == 401:
+            exit_with_err_msg("Unable to collect account information at" + where + " incorrect credentials")
+
+        if response.status_code == 403:
+            exit_with_err_msg("Unable to collect account information at " + where + " you are not authorized to view this account")
+
+        if response.status_code == 404:
+            exit_with_err_msg("Unable to collect account information at " + where + " account does not exist")
+
+        exit_with_err_msg(str(response) + " Unable to collect account information at " + where)
 
     value = json.loads(response.text)
     account_uuid = value['uuid']
@@ -564,6 +573,8 @@ def _configure_distribution_metric(metric_name):
 
     except datadog_api_client.exceptions.ForbiddenException as e:
         exit_with_err_msg('could not configure distribution metric, incorrect credentials')
+    except MaxRetryError as e:
+        exit_with_err_msg('could not connect to host')
 
 
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
