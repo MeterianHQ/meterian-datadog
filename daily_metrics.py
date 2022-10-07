@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+from _socket import gaierror
 
 import datadog_api_client.exceptions
 import requests
@@ -25,7 +26,7 @@ from datadog_api_client.v1.model.distribution_point import DistributionPoint
 from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
 from datadog_api_client.v1.model.distribution_points_payload import DistributionPointsPayload
 from datadog_api_client.v1.model.distribution_points_series import DistributionPointsSeries
-from urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
@@ -247,87 +248,94 @@ def _initLogging(args):
 
 
 def _get_account_uuid(args):
-    logging.debug("Loading account information...")
-
     where = "https://" + args.meterian_env + ".meterian.com/api/v1/accounts/me"
-    headers = {
-        'content-type':'application/json',
-        'Authorization':'token ' + args.meterian_token
-    }
+    try:
+        logging.debug("Loading account information...")
+        headers = {
+            'content-type':'application/json',
+            'Authorization':'token ' + args.meterian_token
+        }
 
-    response = requests.get(where, headers=headers, timeout=10)
-    if response.status_code != 200:
-        if response.status_code == 401:
-            exit_with_err_msg("Unable to collect account information at" + where + " incorrect credentials")
+        response = requests.get(where, headers=headers, timeout=10)
+        if response.status_code != 200:
+            if response.status_code == 401:
+                exit_with_err_msg("Unable to collect account information at" + where + " incorrect credentials")
 
-        if response.status_code == 403:
-            exit_with_err_msg("Unable to collect account information at " + where + " you are not authorized to view this account")
+            if response.status_code == 403:
+                exit_with_err_msg("Unable to collect account information at " + where + " you are not authorized to view this account")
 
-        if response.status_code == 404:
-            exit_with_err_msg("Unable to collect account information at " + where + " account does not exist")
+            if response.status_code == 404:
+                exit_with_err_msg("Unable to collect account information at " + where + " account does not exist")
 
-        exit_with_err_msg(str(response) + " Unable to collect account information at " + where)
+            exit_with_err_msg(str(response) + " Unable to collect account information at " + where)
 
-    value = json.loads(response.text)
-    account_uuid = value['uuid']
+        value = json.loads(response.text)
+        account_uuid = value['uuid']
 
-    print("Account:", value['name'])
-    print("Email:", value['email'])
-    print();
+        print("Account:", value['name'])
+        print("Email:", value['email'])
+        print()
+        logging.debug("collected account information")
+        return account_uuid
 
-    return account_uuid
+    except requests.exceptions.ConnectionError as e:
+        exit_with_err_msg('Could not collect account information. Could not connect to ' + where)
 
 
 def collect_projects_data():
 
     account_uuid = _get_account_uuid(args)
+    try:
+        logging.debug("Loading projects information...")
+        where = "https://"+args.meterian_env+".meterian.com/api/v1/accounts/"+account_uuid+"/projects"
+        headers={
+            'content-type':'application/json',
+            'Authorization':'token '+args.meterian_token
+        }
 
-    logging.debug("Loading projects information...")
-    where = "https://"+args.meterian_env+".meterian.com/api/v1/accounts/"+account_uuid+"/projects"
-    headers={
-        'content-type':'application/json',
-        'Authorization':'token '+args.meterian_token
-    }
+        response = requests.get(where, headers=headers, timeout=10)
+        all_projects = json.loads(response.text)
 
-    response = requests.get(where, headers=headers, timeout=10)
-    all_projects = json.loads(response.text)
+        projects = []
+        for p in all_projects:
+            project_name = p['name']
+            if args.projects:
+                if not project_name in args.projects:
+                    logging.debug("Project %s not selected - name not matching", project_name)
+                    continue
 
-    projects = []
-    for p in all_projects:
-        project_name = p['name']
-        if args.projects:
-            if not project_name in args.projects:
-                logging.debug("Project %s not selected - name not matching", project_name)
-                continue
+            if args.tags:
+                accepted = False
+                for t in p['tags']:
+                    if t in args.tags:
+                        accepted = True
 
-        if args.tags:
-            accepted = False
-            for t in p['tags']:
-                if t in args.tags:
-                    accepted = True
+                if not accepted:
+                    logging.debug("Project %s not selected - tags %s not matching", project_name, str(p['tags']))
+                    continue
 
-            if not accepted:
-                logging.debug("Project %s not selected - tags %s not matching", project_name, str(p['tags']))
-                continue
+            if args.branches:
+                branches = []
+                for b in p['branches']:
+                    if b in args.branches:
+                        logging.debug("Selected branch %s of project %s", project_name, b)
+                        branches.append(b)
+            else:
+                branches = p['branches']
 
-        if args.branches:
-            branches = []
-            for b in p['branches']:
-                if b in args.branches:
-                    logging.debug("Selected branch %s of project %s", project_name, b)
-                    branches.append(b)
-        else:
-            branches = p['branches']
+            if len(branches) > 0:
+                logging.debug("Selected %s project", p['name'])
+                p['branches'] = branches
+                projects.append(p)
+            else:
+                logging.debug("Project %s not selected - no matching branches", project_name)
 
-        if len(branches) > 0:
-            logging.debug("Selected %s project", p['name'])
-            p['branches'] = branches
-            projects.append(p)
-        else:
-            logging.debug("Project %s not selected - no matching branches", project_name)
+        print("Collected", str(len(projects)), "projects out of", str(len(all_projects)))
+        return projects
 
-    print("Collected", str(len(projects)), "projects out of", str(len(all_projects)))
-    return projects
+    except requests.exceptions.ConnectionError as e:
+        exit_with_err_msg("could not collect project information, failed to establish a connection")
+
 
 
 def _load_or_recompute_project_report(name, uuid, branch):
