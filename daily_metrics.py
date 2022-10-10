@@ -25,7 +25,7 @@ from datadog_api_client.v1.model.distribution_point import DistributionPoint
 from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
 from datadog_api_client.v1.model.distribution_points_payload import DistributionPointsPayload
 from datadog_api_client.v1.model.distribution_points_series import DistributionPointsSeries
-from urllib3.exceptions import MaxRetryError, NewConnectionError
+from urllib3.exceptions import MaxRetryError
 
 API_TOKEN_ENVVAR = 'METERIAN_API_TOKEN'
 
@@ -143,6 +143,17 @@ def _parseArgs():
     )
 
     parser.add_argument(
+        '--metrics',
+        metavar='METRICS',
+        default='project_scores,vulns_age,vulns_count_by_severity',
+        help=(
+            'Allows you to specify a comma separated list of metrics to send to datadog'
+            'Supported values: project_scores, vulns_age, vulns_count_by_severity'
+            'If omitted all metrics will be sent.'
+        )
+    )
+
+    parser.add_argument(
         '--projects',
         metavar='PROJECTS',
         default=os.getenv('PROJECTS', None),
@@ -151,7 +162,6 @@ def _parseArgs():
             'You can use the standard environment variable PROJECTS instead'
         )
     )
-
     parser.add_argument(
         '--tags',
         metavar='TAGS',
@@ -207,7 +217,8 @@ def _parseArgs():
     args.tags     = _split_by_comma(args.tags)
     args.branches = _split_by_comma(args.branches)
     args.projects = _split_by_comma(args.projects)
-
+    args.metrics  = _split_by_comma(args.metrics)
+    _enable_metrics(args,args.metrics)
     if args.vuln_age_start_date is not None:
         args.vuln_age_time_period_start = _parse_date_str_as_utc(args.vuln_age_start_date)
     else:
@@ -225,6 +236,24 @@ def _split_by_comma(text):
         return [x.strip() for x in text.split(',')]
     else:
         return None
+
+def _enable_metrics(args, metrics):
+
+    if 'project_scores' in metrics:
+        args.send_project_scores = True
+    else:
+        args.send_project_scores = False
+
+    if 'vulns_age' in metrics:
+        args.send_vulns_age = True
+    else:
+        args.send_vulns_age = False
+
+    if 'vulns_count_by_severity' in metrics:
+        args.send_vulns_count_by_severity = True
+    else:
+        args.send_vulns_count_by_severity = False
+
 
 def _parse_date_str_as_utc(str):
     return datetime.strptime(str,"%Y/%m/%d").replace(tzinfo=timezone.utc)
@@ -673,20 +702,23 @@ def send_statistics(projects,vuln_age_time_period_start,vuln_age_time_period_end
         for branch in p['branches']:
             project_report = _load_or_recompute_project_report(name, p['uuid'], branch)
             print("Uploading data for project", p['name'], "branch", branch)
-            logging.info("sending scores for security section")
-            _send_score_to_dd(name, branch, 'security',  project_report)
+            if args.send_project_scores:
+                logging.info("sending scores for security section")
+                _send_score_to_dd(name, branch, 'security',  project_report)
 
-            logging.info("sending scores for stability section")
-            _send_score_to_dd(name, branch, 'stability', project_report)
+                logging.info("sending scores for stability section")
+                _send_score_to_dd(name, branch, 'stability', project_report)
 
-            logging.info("sending scores for licensing section")
-            _send_score_to_dd(name, branch, 'licensing', project_report)
+                logging.info("sending scores for licensing section")
+                _send_score_to_dd(name, branch, 'licensing', project_report)
 
-            logging.info("sending vulnerability counts information")
-            _send_vulns_to_dd(name, branch, project_report)
+            if args.send_vulns_count_by_severity:
+                logging.info("sending vulnerability counts information")
+                _send_vulns_to_dd(name, branch, project_report)
 
-            logging.info("sending vulnerability age information")
-            _send_vuln_age_to_dd(name, p['uuid'], branch,vuln_age_time_period_start,vuln_age_time_period_end)
+            if args.send_vulns_age:
+                logging.info("sending vulnerability age information")
+                _send_vuln_age_to_dd(name, p['uuid'], branch,vuln_age_time_period_start,vuln_age_time_period_end)
 
 
 def recompute_projects(projects):
@@ -695,11 +727,13 @@ def recompute_projects(projects):
         for branch in p['branches']:
             print("Uploading data for project", p['name'], "branch", branch)
             project_report = _load_or_recompute_project_report(p['uuid'], branch)
+            if args.send_project_scores:
+                _send_score_to_dd(name, branch, 'security',  project_report)
+                _send_score_to_dd(name, branch, 'stability', project_report)
+                _send_score_to_dd(name, branch, 'licensing', project_report)
 
-            _send_score_to_dd(name, branch, 'security',  project_report)
-            _send_score_to_dd(name, branch, 'stability', project_report)
-            _send_score_to_dd(name, branch, 'licensing', project_report)
-            _send_vulns_to_dd(name, branch, project_report)
+            if args.send_vulns_age:
+                _send_vulns_to_dd(name, branch, project_report)
 
 
 
