@@ -14,8 +14,7 @@ import sys
 import time
 
 from datadog import initialize, api
-from datadog.api.exceptions import DatadogException
-from datadog_api_client.exceptions import ApiException
+from datadog_api_client.v1.api.authentication_api import AuthenticationApi
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from datetime import datetime
@@ -192,6 +191,14 @@ def _parseArgs():
     )
 
     parser.add_argument('--recompute', action='store_true')
+    parser.add_argument(
+        '--validate',
+        action='store_true',
+        help=(
+            'check connection to datadog endpoints.'
+            'checks connection to datadog host, validates the datadog API key and validates the datadog APP key'
+        )
+    )
 
     args = parser.parse_args()
 
@@ -423,6 +430,49 @@ def _send_vulns_to_dd(name, branch, project_report):
     except Exception as e:
         exit_with_err_msg(str(e))
 
+
+def _validate_dd_connection():
+    where = args.dd_host
+    if args.validate:
+        try:
+            print("checking connection to datadog")
+            res = requests.get(where)
+            if res.status_code == 200 or res.status_code == 202:
+                print("connection to [" + where + "]" + " is working")
+            else:
+                exit_with_err_msg("could not establish connection to datadog host: [" + where + "]" "status: " + str(res.status_code))
+
+        except requests.exceptions.ConnectionError:
+            exit_with_err_msg("could not establish connection to datadog host: [" + where + "]")
+
+
+        try:
+            config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey})
+            with ApiClient(config) as api_client:
+                instance = AuthenticationApi(api_client)
+                instance.validate()
+                print("API key is valid")
+
+        except datadog_api_client.exceptions.ForbiddenException:
+            print("could not validate api key")
+            exit_with_err_msg("API key is invalid")
+
+        try:
+            config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
+            with ApiClient(config) as api_client:
+                metric_name = args.prefix + "projects.vulns"
+                api_instance = MetricsApi(api_client)
+                api_instance.list_metrics(metric_name)
+                print("APP key is valid")
+
+        except datadog_api_client.exceptions.ForbiddenException:
+            print("could not get retrieve metric information")
+            exit_with_err_msg("APP key is invalid")
+
+        print("OK")
+        exit(0)
+
+
 def _get_project_history(project_uuid, branch):
     where = "https://" + args.meterian_env + ".meterian.com/api/v1/reports/" + project_uuid + "/history"
     headers = {
@@ -561,7 +611,7 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
                 metric_tags.append(tag)
 
             logging.debug(metric_tags)
-            single_res = _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+            _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
 
     except Exception as e:
         exit_with_err_msg(str(e))
@@ -664,6 +714,7 @@ if __name__ == '__main__':
     args = _parseArgs()
     _initLogging(args)
 
+    _validate_dd_connection()
     logging.info('Initializing DD apis...')
     initialize()
 
