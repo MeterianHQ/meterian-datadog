@@ -553,17 +553,11 @@ def _get_adv_history(project_uuid, branch, pid_list):
 
 def tally_time_delta(adv_id, adv_history, times):
     tally = timedelta(0)
-    latest_time = timedelta(0)
+    latest_time = times[0]
     for i in range(len(adv_history)):
         if adv_id in adv_history[i]:
-            if tally == timedelta(0) and latest_time == timedelta(0):
-                latest_time = times[i]
-                if i + 1 < len(adv_history):
-                    tally = times[i + 1] - times[i]
-                    latest_time = times[i+1]
-            else:
-                tally += times[i] - latest_time
-                latest_time = times[i]
+            tally += times[i] - latest_time
+            latest_time = times[i]
         else:
             if i + 1 < len(adv_history):
                 latest_time = times[i + 1]
@@ -619,28 +613,38 @@ def _find_age(project_uuid,branch,start_date,end_date):
     else:
         append_date_to_project_history(times, adv_history, end_date)
 
+    print("most recent report summary " + str(adv_history[-1]))
     for advisories in adv_history:
         for adv_id in advisories:
-            adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
+            if adv_id in adv_history[-1]:
+                adv_metric_map[adv_id].age = tally_time_delta(adv_id, adv_history, times)
+            else:
+                logging.debug('ignoring datapoint for ' + adv_id + ' its not present in the most recent report')
+                adv_metric_map[adv_id] = None
 
+    logging.debug("final map " + str(adv_metric_map))
     return adv_metric_map
 
 
 def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
     vuln_ages = _find_age(project_uuid, branch,start_date,end_date)
     if not vuln_ages:
-        exit_with_err_msg('could not calculate any ages for ' + name)
+        logging.warning('could not calculate any ages for ' + name)
+        return
 
     metric_name = args.prefix + ".vulns.age.distribution"
     try:
-        for adv_id,age_metric in vuln_ages.items():
-            logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
-            metric_tags = ['project:' + name, 'branch:' + branch]
-            for tag in age_metric.to_arr():
-                metric_tags.append(tag)
+        for adv_id, age_metric in vuln_ages.items():
+            if age_metric:
+                logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
+                metric_tags = ['project:' + name, 'branch:' + branch]
+                for tag in age_metric.to_arr():
+                    metric_tags.append(tag)
 
-            logging.debug(metric_tags)
-            _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+                logging.debug(metric_tags)
+                _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+            else:
+                logging.debug("no age metric submitted for vuln %s",adv_id)
 
     except Exception as e:
         exit_with_err_msg(str(e))

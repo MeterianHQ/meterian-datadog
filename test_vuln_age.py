@@ -13,14 +13,6 @@ class TestVulnAge(unittest.TestCase):
 
         assert td.days == 2
 
-    def testAgeShouldRespectTimePassedBetweenReports(self):
-        times = [datetime(day=1, month=1, year=1), datetime(day=8, month=1, year=1)]
-        adv_history = [["abcdef"], []]
-        adv_id = "abcdef"
-
-        td = tally_time_delta(adv_id, adv_history, times)
-
-        assert td.days == 7
 
     def testZeroDaysAreCalculatedCorrectly(self):
         times = [
@@ -29,12 +21,22 @@ class TestVulnAge(unittest.TestCase):
             datetime(day=1, month=1, year=1),
             datetime(day=8, month=1, year=1)
         ]
-        adv_history = [["abcdef"], [], [], []]
+        times_1 = [
+            datetime(day=1,month=1,year=1),
+            datetime(day=2, month=1, year=1),
+            datetime(day=4, month=1, year=1),
+            datetime(day=8, month=1, year=1)
+        ]
         adv_id = "abcdef"
+        adv_history = [[adv_id], [], [], []]
+        adv_history_1 = [[], [adv_id], [], [adv_id]]
 
         td = tally_time_delta(adv_id, adv_history, times)
-
+        td_1 = tally_time_delta(adv_id, adv_history_1,times_1)
         assert td.days == 0
+        assert  td.days == 0
+
+
 
     def testAgeFreezesOnceMitigated(self):
         times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1)]
@@ -62,8 +64,22 @@ class TestVulnAge(unittest.TestCase):
         adv_history = [[adv_id], [adv_id],[], [adv_id],[adv_id]]
 
         td = tally_time_delta(adv_id, adv_history, times)
-        print("days",td.days)
+
         assert td.days == 3, "age should continue from where it left off."
+
+
+    def testAgeShouldNotMakeAssumptionsAboutMissingDates(self):
+        times = [
+            datetime(day=1, month=1,year=1),
+            datetime(day=8, month=1, year=1),
+        ]
+        adv_id = "abcdef"
+        adv_history = [[adv_id],[]]
+
+        td = tally_time_delta(adv_id,adv_history,times)
+
+        assert td.days == 0
+
 
     def testCorrectAgeIfNew(self):
         times = [datetime(day=1, month=1, year=1), datetime(day=3, month=1, year=1), datetime(day=4, month=1, year=1)]
