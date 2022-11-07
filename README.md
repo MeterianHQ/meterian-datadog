@@ -33,7 +33,7 @@ METERIAN_API_TOKEN=...
 BRANCHES=master,develop
 PROJECTS=project_foo,project_bar
 ```
-You can use the `--metrics` flag to specify which type of metric you want to send. This flag is optional and if omitted all metrics available will be send.
+You can use the `--metrics` flag to specify which types of metrics you want to send. This flag is optional and if omitted all available metrics will be sent.
 
 For example if you only wanted to send the `vulns_age` metric and the `project_scores` metric you would run: `python daily_metrics.py --metrics=vulns_age,project_scores`
 
