@@ -31,4 +31,9 @@ DATADOG_APP_KEY=...
 DATADOG_HOST="https://api.datadoghq.eu"
 METERIAN_API_TOKEN=...
 BRANCHES=master,develop
+PROJECTS=project_foo,project_bar
 ```
+You can use the `--metrics` flag to specify which type of metric you want to send. This flag is optional and if omitted all metrics available will be send.
+
+For example if you only wanted to send the `vulns_age` metric and the `project_scores` metric you would run: `python daily_metrics.py --metrics=vulns_age,project_scores`
+
