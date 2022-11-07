@@ -613,7 +613,7 @@ def _find_age(project_uuid,branch,start_date,end_date):
     else:
         append_date_to_project_history(times, adv_history, end_date)
 
-    print("most recent report summary " + str(adv_history[-1]))
+    logging.debug("most recent report summary " + str(adv_history[-1]))
     for advisories in adv_history:
         for adv_id in advisories:
             if adv_id in adv_history[-1]:
@@ -636,13 +636,13 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
     try:
         for adv_id, age_metric in vuln_ages.items():
             if age_metric:
-                logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
+                logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
                 metric_tags = ['project:' + name, 'branch:' + branch]
                 for tag in age_metric.to_arr():
                     metric_tags.append(tag)
 
                 logging.debug(metric_tags)
-                _send_distribution_to_metric_endpoint(metric_name,age_metric.get_mins(),tags=metric_tags)
+                _send_distribution_to_metric_endpoint(metric_name,age_metric.get_age(),tags=metric_tags)
             else:
                 logging.debug("no age metric submitted for vuln %s",adv_id)
 

@@ -34,7 +34,7 @@ class TestVulnAge(unittest.TestCase):
         td = tally_time_delta(adv_id, adv_history, times)
         td_1 = tally_time_delta(adv_id, adv_history_1,times_1)
         assert td.days == 0
-        assert  td.days == 0
+        assert  td_1.days == 0
 
 
 
