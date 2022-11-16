@@ -14,6 +14,97 @@ class TestVulnAge(unittest.TestCase):
         assert td.days == 2
 
 
+    def testShouldBeIdempotent(self):
+        times = [
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=1, month=1, year=1),
+            datetime(day=3, month=1, year=1),
+            datetime(day=3, month=1, year=1),
+            datetime(day=3, month=1, year=1),
+            datetime(day=3, month=1, year=1),
+            datetime(day=3, month=1, year=1),
+            datetime(day=4, month=1, year=1),
+            datetime(day=4, month=1, year=1),
+            datetime(day=4, month=1, year=1)
+        ]
+
+        adv_id = "abcdef"
+        adv_history = [
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id]
+        ]
+
+        td = tally_time_delta(adv_id, adv_history, times)
+        td1 = tally_time_delta(adv_id, adv_history, times)
+        td2 = tally_time_delta(adv_id, adv_history, times)
+        td3 = tally_time_delta(adv_id, adv_history, times)
+
+        assert(td.days == 3)
+        assert(td1.days == td.days)
+        assert(td2.days == td1.days)
+        assert(td3.days == td2.days)
+
+
+    def testShouldBeIdempotentWithinADay(self):
+        times = [
+            datetime(day=1, month=1, year=1,hour=10,minute=30),
+            datetime(day=1, month=1, year=1,hour=12,minute=45),
+            datetime(day=1, month=1, year=1,hour=14,minute=14),
+            datetime(day=1, month=1, year=1,hour=15,minute=34),
+            datetime(day=1, month=1, year=1,hour=16,minute=12),
+            datetime(day=3, month=1, year=1,hour=12,minute=14),
+            datetime(day=3, month=1, year=1,hour=17,minute=12),
+            datetime(day=3, month=1, year=1,hour=17,minute=13),
+            datetime(day=3, month=1, year=1,hour=18,minute=26),
+            datetime(day=3, month=1, year=1,hour=19,minute=3),
+            datetime(day=4, month=1, year=1,hour=8,minute=51),
+            datetime(day=4, month=1, year=1,hour=16,minute=1),
+            datetime(day=4, month=1, year=1,hour=17,minute=17)
+        ]
+
+        adv_id = "abcdef"
+        adv_history = [
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id],
+            [adv_id]
+        ]
+
+        td = tally_time_delta(adv_id, adv_history, times)
+        td1 = tally_time_delta(adv_id, adv_history, times)
+        td2 = tally_time_delta(adv_id, adv_history, times)
+        td3 = tally_time_delta(adv_id, adv_history, times)
+
+        assert(td.days == 3)
+        assert(td1.days == td.days)
+        assert(td2.days == td1.days)
+        assert(td3.days == td2.days)
+
+
+
     def testZeroDaysAreCalculatedCorrectly(self):
         times = [
             datetime(day=1, month=1, year=1),
