@@ -15,22 +15,11 @@ import time
 
 from datadog import initialize, api
 from datadog_api_client.v1.api.authentication_api import AuthenticationApi
-from datadog_api_client.v2.model.metric_tag_configuration_create_attributes import \
-    MetricTagConfigurationCreateAttributes
-from datadog_api_client.v2.model.metric_tag_configuration_create_data import MetricTagConfigurationCreateData
-from datadog_api_client.v2.model.metric_tag_configuration_create_request import MetricTagConfigurationCreateRequest
-from datadog_api_client.v2.model.metric_tag_configuration_metric_types import MetricTagConfigurationMetricTypes
-from datadog_api_client.v2.model.metric_tag_configuration_type import MetricTagConfigurationType
-from datadog_api_client.v2.model.metric_tag_configuration_update_attributes import \
-    MetricTagConfigurationUpdateAttributes
-from datadog_api_client.v2.model.metric_tag_configuration_update_data import MetricTagConfigurationUpdateData
-from datadog_api_client.v2.model.metric_tag_configuration_update_request import MetricTagConfigurationUpdateRequest
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from datetime import datetime
 from datadog_api_client import ApiClient, Configuration
 from datadog_api_client.v1.api.metrics_api import MetricsApi
-from datadog_api_client.v2.api.metrics_api import MetricsApi as MetricsApiV2
 from datadog_api_client.v1.model.metric_metadata import MetricMetadata
 from datadog_api_client.v1.model.distribution_point import DistributionPoint
 from datadog_api_client.v1.model.distribution_points_content_encoding import DistributionPointsContentEncoding
@@ -704,7 +693,6 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
         return
 
     try:
-        #_configure_distribution_metric_tags(args.vuln_age_tags)
         for adv_id, age_metric in vuln_ages.items():
             if age_metric:
                 logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
@@ -749,74 +737,6 @@ def _age_metric_name():
     name = prefix + "vulns.age.distribution"
     return name
 
-
-def _configure_distribution_metric_tags(tag_arr):
-    try:
-        name = _age_metric_name()
-        current_tag_arr = _list_age_metric_tag_configuration()
-        diff = set(tag_arr).symmetric_difference(current_tag_arr)
-
-        if diff is None or not diff:
-            logging.info("metric is already using this configuration")
-            return
-
-        logging.info("metric name %s",name)
-        logging.debug("configuring tags to %s",tag_arr)
-        body = MetricTagConfigurationCreateRequest(
-            data=MetricTagConfigurationCreateData(
-                type=MetricTagConfigurationType(value='manage_tags'),
-                id=name,
-                attributes=MetricTagConfigurationCreateAttributes(
-                    tags=tag_arr,
-                    metric_type=MetricTagConfigurationMetricTypes(value='distribution'),
-                ),
-            ),
-        )
-        config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
-        with ApiClient(config) as api_client:
-            api_instance = MetricsApiV2(api_client)
-            res = api_instance.create_tag_configuration(
-                metric_name=name,
-                body=body
-            )
-            logging.debug("config age metric res: %s",res)
-
-    except datadog_api_client.exceptions.ForbiddenException as e:
-        exit_with_err_msg('could not configure distribution metric, incorrect credentials')
-    except datadog_api_client.exceptions.ApiException as e:
-        if e.status == 409:
-            _update_existing_metric_tag_configuration(tag_arr)
-        else:
-            exit_with_err_msg(e)
-
-def _update_existing_metric_tag_configuration(tags):
-    body = MetricTagConfigurationUpdateRequest(
-        data=MetricTagConfigurationUpdateData(
-            type=MetricTagConfigurationType(value='manage_tags'),
-            id=_age_metric_name(),
-            attributes=MetricTagConfigurationUpdateAttributes(
-                tags=tags
-            ),
-        ),
-    )
-
-    config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
-    with ApiClient(config) as api_client:
-        api_instance = MetricsApiV2(api_client)
-        response = api_instance.update_tag_configuration(metric_name=_age_metric_name(), body=body)
-
-def _list_age_metric_tag_configuration():
-    try:
-        config = Configuration(host=args.dd_host, api_key={'apiKeyAuth': args.dd_apikey, 'appKeyAuth': args.dd_appkey})
-        with ApiClient(config) as api_client:
-            api_instance = MetricsApiV2(api_client)
-            res = api_instance.list_tag_configuration_by_name(
-                metric_name=_age_metric_name(),
-            )
-
-            return res.to_dict()['data']['attributes']['tags']
-    except datadog_api_client.exceptions.ForbiddenException as e:
-        exit_with_err_msg('Not authorized with metric_read permission')
 
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
     try:
