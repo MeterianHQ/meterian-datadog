@@ -707,12 +707,12 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
         #_configure_distribution_metric_tags(args.vuln_age_tags)
         for adv_id, age_metric in vuln_ages.items():
             if age_metric:
-                logging.debug("--vuln: %s, lib: %s, mins_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_mins())
+                logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
                 metric_tags = age_metric.make_tags(name,branch)
                 filtered_tags = metric_tags.filtered(args.vuln_age_tags)
                 logging.debug(filtered_tags.list_with_values())
                 metric_name = _age_metric_name()
-                _send_distribution_to_metric_endpoint(metric_name, age_metric.get_mins(), tags=filtered_tags.list_with_values())
+                _send_distribution_to_metric_endpoint(metric_name, age_metric.get_age(), tags=filtered_tags.list_with_values())
             else:
                 logging.debug("no age metric submitted for vuln %s",adv_id)
 
