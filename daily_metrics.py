@@ -36,6 +36,54 @@ class HelpingParser(argparse.ArgumentParser):
         sys.stderr.write('\n')
         sys.exit(-1)
 
+
+class AgeMetricTags():
+    def __init__(self,project=None,branch=None,cve=None,severity=None,library=None):
+        self.project = project
+        self.branch = branch
+        self.cve = cve
+        self.severity = severity
+        self.library = library
+
+    def filtered(self,tags):
+        new_tag = AgeMetricTags()
+        if 'severity' in tags:
+            new_tag.severity = self.severity
+
+        if 'cve' in tags:
+            new_tag.cve = self.cve
+
+        if 'project' in tags:
+            new_tag.project = self.project
+
+        if 'branch' in tags:
+            new_tag.branch = self.branch
+
+        if 'library' in tags:
+            new_tag.library = self.library
+
+        return new_tag
+
+
+    def list_with_values(self):
+        tags = []
+        if self.severity is not None:
+            tags.append('severity:' + self.severity)
+
+        if self.cve is not None:
+            tags.append('cve:' + self.cve)
+
+        if self.project is not None:
+            tags.append('project:' + self.project)
+
+        if self.branch is not None:
+            tags.append('branch:' + self.branch)
+
+        if self.library is not None:
+            tags.append('library:' + self.library)
+
+        return tags
+
 class AgeMetric():
     def __init__(self, advice_id, library, age=timedelta(0), cve=None,severity=None):
         self.advice_id = advice_id
@@ -44,17 +92,16 @@ class AgeMetric():
         self.cve = cve
         self.severity = severity
 
-    def to_arr(self):
-        arr = []
+    def make_tags(self,project,branch):
+        tags = AgeMetricTags(
+            project=project,
+            branch=branch,
+            library=self.library,
+            cve=self.cve,
+            severity=self.severity
+        )
 
-        arr.append("library:" + self.library)
-        if self.cve is not None:
-            arr.append("cve:" + self.cve)
-
-        if self.severity is not None:
-            arr.append("severity:"+self.severity)
-
-        return arr
+        return tags
 
     def get_age(self):
         return math.floor(self.age.days)
@@ -162,6 +209,17 @@ def _parseArgs():
             'You can use the standard environment variable PROJECTS instead'
         )
     )
+
+    parser.add_argument(
+        '--vuln-age-tags',
+        metavar='VULNS_AGE_TAGS',
+        default='library,project,branch,cve,severity',
+        help=(
+            'Allows you to specify a comma separated list of tags you want to send for the vulnerability age metric'
+            'Supported values: library, project, branch, cve, severity'
+            'If omitted all  tags will be sent'
+        )
+    )
     parser.add_argument(
         '--tags',
         metavar='TAGS',
@@ -218,6 +276,8 @@ def _parseArgs():
     args.branches = _split_by_comma(args.branches)
     args.projects = _split_by_comma(args.projects)
     args.metrics  = _split_by_comma(args.metrics)
+    args.vuln_age_tags = _split_by_comma(args.vuln_age_tags)
+
     _enable_metrics(args,args.metrics)
     if args.vuln_age_start_date is not None:
         args.vuln_age_time_period_start = _parse_date_str_as_utc(args.vuln_age_start_date)
@@ -632,17 +692,15 @@ def _send_vuln_age_to_dd(name,project_uuid, branch,start_date,end_date):
         logging.warning('could not calculate any ages for ' + name)
         return
 
-    metric_name = args.prefix + ".vulns.age.distribution"
     try:
         for adv_id, age_metric in vuln_ages.items():
             if age_metric:
                 logging.debug("--vuln: %s, lib: %s, days_open: %d",age_metric.advice_id,age_metric.library,age_metric.get_age())
-                metric_tags = ['project:' + name, 'branch:' + branch]
-                for tag in age_metric.to_arr():
-                    metric_tags.append(tag)
-
-                logging.debug(metric_tags)
-                _send_distribution_to_metric_endpoint(metric_name,age_metric.get_age(),tags=metric_tags)
+                metric_tags = age_metric.make_tags(name,branch)
+                filtered_tags = metric_tags.filtered(args.vuln_age_tags)
+                logging.debug(filtered_tags.list_with_values())
+                metric_name = _age_metric_name()
+                _send_distribution_to_metric_endpoint(metric_name, age_metric.get_age(), tags=filtered_tags.list_with_values())
             else:
                 logging.debug("no age metric submitted for vuln %s",adv_id)
 
@@ -668,6 +726,18 @@ def _configure_distribution_metric(metric_name):
         exit_with_err_msg('could not connect to host')
 
 
+def _age_metric_name():
+    prefix = args.prefix
+    if prefix.find('.') == 0:
+        prefix = prefix[1:]
+
+    if prefix.rfind('.') != (len(prefix) - 1):
+        prefix = prefix + "."
+
+    name = prefix + "vulns.age.distribution"
+    return name
+
+
 def _send_distribution_to_metric_endpoint(metric_name,value,tags):
     try:
         body = DistributionPointsPayload(
@@ -690,9 +760,14 @@ def _send_distribution_to_metric_endpoint(metric_name,value,tags):
 
         with ApiClient(config) as api_client:
             instance = MetricsApi(api_client)
-            instance.submit_distribution_points(
+            res = instance.submit_distribution_points(
                 content_encoding=DistributionPointsContentEncoding("deflate"), body=body
             )
+            if hasattr(res, 'errors'):
+                exit_with_err_msg(res.errors)
+            else:
+                logging.debug('sending %s',metric_name)
+                logging.debug('dist metric sent %s', res.status)
 
     except datadog_api_client.exceptions.ForbiddenException as e:
         exit_with_err_msg('could not send distribution metric, incorrect credentials')
