@@ -37,3 +37,9 @@ You can use the `--metrics` flag to specify which types of metrics you want to s
 
 For example if you only wanted to send the `vulns_age` metric and the `project_scores` metric you would run: `python daily_metrics.py --metrics=vulns_age,project_scores`
 
+You can also use the `--vuln-age-tags` flag to control what tags you want to be associated to the 
+datapoints sent by the `vulns_age` metric. For example if you wanted to send data without a specific value for the library tag you would run: 
+
+`python daily_metrics.py --vuln-age-tags=project,branch,severity,cve`
+
+by default the tags `project,branch,severity,cve,library` are enabled for the `vulns_age` metric
